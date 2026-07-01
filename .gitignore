@@ -1,0 +1,14 @@
+# Binaries
+/bin/
+*.exe
+*.out
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store
+
+# Go
+vendor/

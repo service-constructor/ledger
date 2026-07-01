@@ -1,0 +1,148 @@
+syntax = "proto3";
+
+package ledger.v1;
+
+option go_package = "github.com/nvsces/ledger/gen/ledger/v1;ledgerv1";
+
+// LedgerService is the settlement primitive behind the Service Constructor
+// payment saga (white paper §10). It owns balances in a double-entry ledger and
+// exposes the three saga operations. Every operation is idempotent on order_id:
+// a repeated call for the same (order_id, op) is a no-op that returns success,
+// so the saga's outbox dispatcher can retry safely.
+service LedgerService {
+  // CreateAccount provisions a client account: it generates a wallet_id and a
+  // TON deposit address + unique memo tag for the given user, and returns them.
+  // Idempotent per user_id — a repeat returns the existing account. This is the
+  // ledger's role as the accounts service (it owns the on-chain deposit routing).
+  rpc CreateAccount(CreateAccountRequest) returns (Account);
+
+  // GetAccountByMemo resolves the account an on-chain deposit belongs to, by its
+  // memo tag. Used by the deposit-crediting path.
+  rpc GetAccountByMemo(GetAccountByMemoRequest) returns (Account);
+
+  // Freeze moves amount from a wallet's available balance into its held balance.
+  // Called before the provider executes; guarantees funds exist to capture.
+  rpc Freeze(FreezeRequest) returns (OpResponse);
+
+  // Capture settles a held amount: net is credited to the service's receiving
+  // wallet, fee to the platform wallet. The held funds are debited.
+  rpc Capture(CaptureRequest) returns (OpResponse);
+
+  // Release returns a wallet's held funds to its available balance
+  // (compensation for a failed/cancelled order).
+  rpc Release(ReleaseRequest) returns (OpResponse);
+
+  // Deposit credits external funds into a wallet's available balance (e.g. an
+  // on-chain TON transfer identified by its memo tag). Unlike the saga ops this
+  // is an external-funding entry point: money enters the system here. Idempotent
+  // on a caller-supplied reference (ref).
+  rpc Deposit(DepositRequest) returns (OpResponse);
+
+  // GetBalance returns a wallet's current available and held balances.
+  rpc GetBalance(GetBalanceRequest) returns (BalanceResponse);
+
+  // ListEntries returns the append-only journal rows for an order (audit).
+  rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
+}
+
+message CreateAccountRequest {
+  // user_id is the owning user (from the auth service). One account per
+  // (user, currency) in the demo.
+  string user_id = 1;
+  int64 currency_id = 2;
+}
+
+message GetAccountByMemoRequest {
+  string memo = 1;
+}
+
+// Account is a client's ledger account: the wallet holding their balance plus
+// the on-chain deposit routing (shared address + unique memo in the demo).
+message Account {
+  string wallet_id = 1;
+  string user_id = 2;
+  string ton_address = 3;
+  string memo = 4;
+  int64 currency_id = 5;
+}
+
+message FreezeRequest {
+  // order_id is the saga order; it is the idempotency key for this operation.
+  string order_id = 1;
+  // wallet_id is the user's source wallet.
+  string wallet_id = 2;
+  // amount is a decimal string (e.g. "5.00") to avoid float rounding.
+  string amount = 3;
+  int64 currency_id = 4;
+}
+
+message CaptureRequest {
+  string order_id = 1;
+  // wallet_id is the user's wallet whose held funds are captured.
+  string wallet_id = 2;
+  // net is credited to receiving_wallet_id; fee to the platform wallet.
+  string net = 3;
+  string fee = 4;
+  string receiving_wallet_id = 5;
+  int64 currency_id = 6;
+}
+
+message ReleaseRequest {
+  string order_id = 1;
+  string wallet_id = 2;
+  int64 currency_id = 3;
+}
+
+message DepositRequest {
+  // ref is the idempotency key: a unique reference for this external credit
+  // (e.g. the on-chain transaction hash, or memo+seqno). A replay is a no-op.
+  string ref = 1;
+  string wallet_id = 2;
+  string amount = 3;
+  int64 currency_id = 4;
+}
+
+// OpResponse reports the applied operation. applied is false when the call was a
+// no-op replay of an already-applied operation.
+message OpResponse {
+  string order_id = 1;
+  bool applied = 2;
+}
+
+message GetBalanceRequest {
+  string wallet_id = 1;
+  int64 currency_id = 2;
+}
+
+message BalanceResponse {
+  string wallet_id = 1;
+  int64 currency_id = 2;
+  // available and held are decimal strings.
+  string available = 3;
+  string held = 4;
+}
+
+message ListEntriesRequest {
+  string order_id = 1;
+}
+
+// Entry is one side of a double-entry posting: a signed decimal amount against a
+// (wallet, bucket) account. Debits are negative, credits positive; the sum of
+// all entries in a transaction is zero.
+message Entry {
+  int64 id = 1;
+  string order_id = 2;
+  // op is FREEZE | CAPTURE | RELEASE.
+  string op = 3;
+  string wallet_id = 4;
+  // bucket is AVAILABLE | HELD.
+  string bucket = 5;
+  int64 currency_id = 6;
+  // amount is a signed decimal string.
+  string amount = 7;
+  string created_at = 8;
+}
+
+message ListEntriesResponse {
+  repeated Entry entries = 1;
+}

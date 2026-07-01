@@ -1,0 +1,10 @@
+version: v2
+plugins:
+  # Messages and enums.
+  - local: protoc-gen-go
+    out: gen
+    opt: paths=source_relative
+  # gRPC server/client stubs.
+  - local: protoc-gen-go-grpc
+    out: gen
+    opt: paths=source_relative
