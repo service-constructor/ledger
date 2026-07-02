@@ -24,6 +24,8 @@ type Store interface {
 	Deposit(ctx context.Context, ref, walletID string, currencyID int64, amount decimal.Decimal) (bool, error)
 	GetBalance(ctx context.Context, walletID string, currencyID int64) (*domain.Balance, error)
 	ListEntries(ctx context.Context, orderID string) ([]*domain.Entry, error)
+	ListCurrencies(ctx context.Context) ([]*domain.Currency, error)
+	GetCurrency(ctx context.Context, id int64) (*domain.Currency, error)
 }
 
 // Ledger is the application service. platformWallet is the destination for
@@ -64,6 +66,11 @@ func (l *Ledger) CreateAccount(ctx context.Context, userID string, currencyID in
 	if userID == "" {
 		return nil, domain.ErrInvalidAmount
 	}
+	// Reject unknown currencies up front (the accounts FK would also catch this,
+	// but a clean domain error is clearer than a constraint violation).
+	if _, err := l.store.GetCurrency(ctx, currencyID); err != nil {
+		return nil, err
+	}
 	acc := &domain.Account{
 		WalletID:   "wlt_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
 		UserID:     userID,
@@ -81,6 +88,11 @@ func (l *Ledger) AccountByMemo(ctx context.Context, memo string) (*domain.Accoun
 		return nil, domain.ErrAccountNotFound
 	}
 	return l.store.AccountByMemo(ctx, memo)
+}
+
+// ListCurrencies returns all known currencies (the reference catalog).
+func (l *Ledger) ListCurrencies(ctx context.Context) ([]*domain.Currency, error) {
+	return l.store.ListCurrencies(ctx)
 }
 
 // newMemo returns a short, unique deposit tag. TON memos are free-form text; a

@@ -108,6 +108,25 @@ func (s *LedgerServer) ListEntries(ctx context.Context, req *ledgerv1.ListEntrie
 	return &ledgerv1.ListEntriesResponse{Entries: out}, nil
 }
 
+func (s *LedgerServer) ListCurrencies(ctx context.Context, _ *ledgerv1.ListCurrenciesRequest) (*ledgerv1.ListCurrenciesResponse, error) {
+	currencies, err := s.svc.ListCurrencies(ctx)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	out := make([]*ledgerv1.Currency, 0, len(currencies))
+	for _, c := range currencies {
+		out = append(out, &ledgerv1.Currency{
+			Id:       c.ID,
+			Code:     c.Code,
+			Name:     c.Name,
+			Symbol:   c.Symbol,
+			Decimals: c.Decimals,
+			IsReal:   c.IsReal,
+		})
+	}
+	return &ledgerv1.ListCurrenciesResponse{Currencies: out}, nil
+}
+
 func accountToProto(a *domain.Account) *ledgerv1.Account {
 	return &ledgerv1.Account{
 		WalletId:   a.WalletID,
@@ -127,7 +146,8 @@ func toStatus(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, domain.ErrInvalidAmount), errors.Is(err, domain.ErrNonPositive):
 		return status.Error(codes.InvalidArgument, err.Error())
-	case errors.Is(err, domain.ErrWalletNotFound), errors.Is(err, domain.ErrAccountNotFound):
+	case errors.Is(err, domain.ErrWalletNotFound), errors.Is(err, domain.ErrAccountNotFound),
+		errors.Is(err, domain.ErrCurrencyNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())

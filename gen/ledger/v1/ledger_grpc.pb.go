@@ -27,6 +27,7 @@ const (
 	LedgerService_Deposit_FullMethodName          = "/ledger.v1.LedgerService/Deposit"
 	LedgerService_GetBalance_FullMethodName       = "/ledger.v1.LedgerService/GetBalance"
 	LedgerService_ListEntries_FullMethodName      = "/ledger.v1.LedgerService/ListEntries"
+	LedgerService_ListCurrencies_FullMethodName   = "/ledger.v1.LedgerService/ListCurrencies"
 )
 
 // LedgerServiceClient is the client API for LedgerService service.
@@ -65,6 +66,10 @@ type LedgerServiceClient interface {
 	GetBalance(ctx context.Context, in *GetBalanceRequest, opts ...grpc.CallOption) (*BalanceResponse, error)
 	// ListEntries returns the append-only journal rows for an order (audit).
 	ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (*ListEntriesResponse, error)
+	// ListCurrencies returns the reference catalog of known currencies (id, code,
+	// symbol, decimals, is_real). Callers use it to render wallets and to tell
+	// test money (is_real=false) from real money.
+	ListCurrencies(ctx context.Context, in *ListCurrenciesRequest, opts ...grpc.CallOption) (*ListCurrenciesResponse, error)
 }
 
 type ledgerServiceClient struct {
@@ -155,6 +160,16 @@ func (c *ledgerServiceClient) ListEntries(ctx context.Context, in *ListEntriesRe
 	return out, nil
 }
 
+func (c *ledgerServiceClient) ListCurrencies(ctx context.Context, in *ListCurrenciesRequest, opts ...grpc.CallOption) (*ListCurrenciesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListCurrenciesResponse)
+	err := c.cc.Invoke(ctx, LedgerService_ListCurrencies_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LedgerServiceServer is the server API for LedgerService service.
 // All implementations must embed UnimplementedLedgerServiceServer
 // for forward compatibility.
@@ -191,6 +206,10 @@ type LedgerServiceServer interface {
 	GetBalance(context.Context, *GetBalanceRequest) (*BalanceResponse, error)
 	// ListEntries returns the append-only journal rows for an order (audit).
 	ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error)
+	// ListCurrencies returns the reference catalog of known currencies (id, code,
+	// symbol, decimals, is_real). Callers use it to render wallets and to tell
+	// test money (is_real=false) from real money.
+	ListCurrencies(context.Context, *ListCurrenciesRequest) (*ListCurrenciesResponse, error)
 	mustEmbedUnimplementedLedgerServiceServer()
 }
 
@@ -224,6 +243,9 @@ func (UnimplementedLedgerServiceServer) GetBalance(context.Context, *GetBalanceR
 }
 func (UnimplementedLedgerServiceServer) ListEntries(context.Context, *ListEntriesRequest) (*ListEntriesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListEntries not implemented")
+}
+func (UnimplementedLedgerServiceServer) ListCurrencies(context.Context, *ListCurrenciesRequest) (*ListCurrenciesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListCurrencies not implemented")
 }
 func (UnimplementedLedgerServiceServer) mustEmbedUnimplementedLedgerServiceServer() {}
 func (UnimplementedLedgerServiceServer) testEmbeddedByValue()                       {}
@@ -390,6 +412,24 @@ func _LedgerService_ListEntries_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LedgerService_ListCurrencies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListCurrenciesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LedgerServiceServer).ListCurrencies(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LedgerService_ListCurrencies_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LedgerServiceServer).ListCurrencies(ctx, req.(*ListCurrenciesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LedgerService_ServiceDesc is the grpc.ServiceDesc for LedgerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -428,6 +468,10 @@ var LedgerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListEntries",
 			Handler:    _LedgerService_ListEntries_Handler,
+		},
+		{
+			MethodName: "ListCurrencies",
+			Handler:    _LedgerService_ListCurrencies_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

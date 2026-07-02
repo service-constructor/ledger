@@ -43,6 +43,26 @@ service LedgerService {
 
   // ListEntries returns the append-only journal rows for an order (audit).
   rpc ListEntries(ListEntriesRequest) returns (ListEntriesResponse);
+
+  // ListCurrencies returns the reference catalog of known currencies (id, code,
+  // symbol, decimals, is_real). Callers use it to render wallets and to tell
+  // test money (is_real=false) from real money.
+  rpc ListCurrencies(ListCurrenciesRequest) returns (ListCurrenciesResponse);
+}
+
+message ListCurrenciesRequest {}
+
+message Currency {
+  int64 id = 1;
+  string code = 2;      // short machine code, e.g. DEV, GRAM
+  string name = 3;      // display name
+  string symbol = 4;    // display symbol/ticker
+  int32 decimals = 5;   // on-chain precision (informational)
+  bool is_real = 6;     // false = test/dev money, true = backed by a real chain
+}
+
+message ListCurrenciesResponse {
+  repeated Currency currencies = 1;
 }
 
 message CreateAccountRequest {
