@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	LedgerService_CreateAccount_FullMethodName    = "/ledger.v1.LedgerService/CreateAccount"
 	LedgerService_GetAccountByMemo_FullMethodName = "/ledger.v1.LedgerService/GetAccountByMemo"
+	LedgerService_ListAccounts_FullMethodName     = "/ledger.v1.LedgerService/ListAccounts"
 	LedgerService_Freeze_FullMethodName           = "/ledger.v1.LedgerService/Freeze"
 	LedgerService_Capture_FullMethodName          = "/ledger.v1.LedgerService/Capture"
 	LedgerService_Release_FullMethodName          = "/ledger.v1.LedgerService/Release"
@@ -48,6 +49,9 @@ type LedgerServiceClient interface {
 	// GetAccountByMemo resolves the account an on-chain deposit belongs to, by its
 	// memo tag. Used by the deposit-crediting path.
 	GetAccountByMemo(ctx context.Context, in *GetAccountByMemoRequest, opts ...grpc.CallOption) (*Account, error)
+	// ListAccounts returns every account the given user owns (one per currency).
+	// The auth service uses it to render a user's wallets across all currencies.
+	ListAccounts(ctx context.Context, in *ListAccountsRequest, opts ...grpc.CallOption) (*ListAccountsResponse, error)
 	// Freeze moves amount from a wallet's available balance into its held balance.
 	// Called before the provider executes; guarantees funds exist to capture.
 	Freeze(ctx context.Context, in *FreezeRequest, opts ...grpc.CallOption) (*OpResponse, error)
@@ -94,6 +98,16 @@ func (c *ledgerServiceClient) GetAccountByMemo(ctx context.Context, in *GetAccou
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Account)
 	err := c.cc.Invoke(ctx, LedgerService_GetAccountByMemo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ledgerServiceClient) ListAccounts(ctx context.Context, in *ListAccountsRequest, opts ...grpc.CallOption) (*ListAccountsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAccountsResponse)
+	err := c.cc.Invoke(ctx, LedgerService_ListAccounts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -188,6 +202,9 @@ type LedgerServiceServer interface {
 	// GetAccountByMemo resolves the account an on-chain deposit belongs to, by its
 	// memo tag. Used by the deposit-crediting path.
 	GetAccountByMemo(context.Context, *GetAccountByMemoRequest) (*Account, error)
+	// ListAccounts returns every account the given user owns (one per currency).
+	// The auth service uses it to render a user's wallets across all currencies.
+	ListAccounts(context.Context, *ListAccountsRequest) (*ListAccountsResponse, error)
 	// Freeze moves amount from a wallet's available balance into its held balance.
 	// Called before the provider executes; guarantees funds exist to capture.
 	Freeze(context.Context, *FreezeRequest) (*OpResponse, error)
@@ -225,6 +242,9 @@ func (UnimplementedLedgerServiceServer) CreateAccount(context.Context, *CreateAc
 }
 func (UnimplementedLedgerServiceServer) GetAccountByMemo(context.Context, *GetAccountByMemoRequest) (*Account, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetAccountByMemo not implemented")
+}
+func (UnimplementedLedgerServiceServer) ListAccounts(context.Context, *ListAccountsRequest) (*ListAccountsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAccounts not implemented")
 }
 func (UnimplementedLedgerServiceServer) Freeze(context.Context, *FreezeRequest) (*OpResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Freeze not implemented")
@@ -300,6 +320,24 @@ func _LedgerService_GetAccountByMemo_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(LedgerServiceServer).GetAccountByMemo(ctx, req.(*GetAccountByMemoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LedgerService_ListAccounts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAccountsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LedgerServiceServer).ListAccounts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LedgerService_ListAccounts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LedgerServiceServer).ListAccounts(ctx, req.(*ListAccountsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -444,6 +482,10 @@ var LedgerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetAccountByMemo",
 			Handler:    _LedgerService_GetAccountByMemo_Handler,
+		},
+		{
+			MethodName: "ListAccounts",
+			Handler:    _LedgerService_ListAccounts_Handler,
 		},
 		{
 			MethodName: "Freeze",

@@ -72,6 +72,90 @@ func bal(t *testing.T, r *LedgerRepository, wallet string, cur int64) (string, s
 
 func dec(s string) decimal.Decimal { d, _ := decimal.NewFromString(s); return d }
 
+func TestDepositIdempotentByRef(t *testing.T) {
+	pool := testPool(t)
+	r := NewLedgerRepository(pool)
+	ctx := context.Background()
+
+	wallet := "wlt_dep_idem"
+	ref := "ton:111:deadbeef"
+	reset(t, pool, []string{ref}, []string{wallet})
+
+	applied, err := r.Deposit(ctx, ref, wallet, 1, dec("7.00"))
+	if err != nil || !applied {
+		t.Fatalf("first deposit: applied=%v err=%v", applied, err)
+	}
+	// Replayed deposit (same ref) is a no-op and must not double-credit.
+	applied, err = r.Deposit(ctx, ref, wallet, 1, dec("7.00"))
+	if err != nil {
+		t.Fatalf("deposit replay err: %v", err)
+	}
+	if applied {
+		t.Fatal("replayed deposit reported applied=true, want no-op")
+	}
+	if a, _ := bal(t, r, wallet, 1); a != "7" {
+		t.Fatalf("after replay available=%s, want 7 (double-credited!)", a)
+	}
+}
+
+// TestPostLegsConflictDoesNotDoubleCredit exercises the ON CONFLICT DO NOTHING
+// guard directly: it applies the same (ref, op, wallet, bucket) leg twice through
+// postLegs, bypassing the alreadyApplied short-circuit to simulate a concurrent
+// writer that lost the race. The duplicate leg must insert nothing AND leave the
+// balance untouched.
+func TestPostLegsConflictDoesNotDoubleCredit(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	wallet := "wlt_postlegs_conflict"
+	ref := "ton:222:cafebabe"
+	reset(t, pool, []string{ref}, []string{wallet})
+
+	legs := []leg{{wallet, domain.BucketAvailable, dec("3.50")}}
+
+	apply := func() error {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+		if err := postLegs(ctx, tx, ref, domain.OpDeposit, 1, legs); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+
+	if err := apply(); err != nil {
+		t.Fatalf("first postLegs: %v", err)
+	}
+	// Second application of the identical leg: the insert conflicts and is skipped,
+	// so the balance stays put rather than being bumped a second time.
+	if err := apply(); err != nil {
+		t.Fatalf("duplicate postLegs returned error, want clean no-op: %v", err)
+	}
+
+	var available string
+	if err := pool.QueryRow(ctx,
+		`SELECT available::text FROM wallet_balances WHERE wallet_id=$1 AND currency_id=1`,
+		wallet).Scan(&available); err != nil {
+		t.Fatalf("read balance: %v", err)
+	}
+	if available != "3.500000000000000000" {
+		t.Fatalf("available=%s, want 3.5 (duplicate leg double-credited)", available)
+	}
+
+	// Exactly one journal row exists for the leg.
+	var n int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM entries WHERE order_id=$1 AND op=$2 AND wallet_id=$3 AND bucket=$4`,
+		ref, string(domain.OpDeposit), wallet, string(domain.BucketAvailable)).Scan(&n); err != nil {
+		t.Fatalf("count entries: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("journal rows=%d, want 1", n)
+	}
+}
+
 func TestFreezeCaptureHappyPath(t *testing.T) {
 	pool := testPool(t)
 	r := NewLedgerRepository(pool)
@@ -234,6 +318,87 @@ func TestCreateAccountIdempotentAndDepositByMemo(t *testing.T) {
 	}
 	if a, _ := bal(t, r, "wlt_acct_1", 1); a != "12.5" {
 		t.Fatalf("deposit replay double-credited: available=%s", a)
+	}
+}
+
+func TestAccountsByUser(t *testing.T) {
+	pool := testPool(t)
+	r := NewLedgerRepository(pool)
+	ctx := context.Background()
+
+	user := "u_list_accounts"
+	_, _ = pool.Exec(ctx, `DELETE FROM accounts WHERE user_id = $1`, user)
+
+	// One account per seeded currency (1=DEV, 2=GRAM).
+	for _, c := range []struct {
+		wallet string
+		memo   string
+		ccy    int64
+	}{
+		{"wlt_list_1", "memo-list-1", 1},
+		{"wlt_list_2", "memo-list-2", 2},
+	} {
+		if _, err := r.CreateAccount(ctx, &domain.Account{
+			WalletID: c.wallet, UserID: user, TONAddress: "UQ_shared", Memo: c.memo, CurrencyID: c.ccy,
+		}); err != nil {
+			t.Fatalf("CreateAccount %d: %v", c.ccy, err)
+		}
+	}
+
+	accs, err := r.AccountsByUser(ctx, user)
+	if err != nil {
+		t.Fatalf("AccountsByUser: %v", err)
+	}
+	if len(accs) != 2 {
+		t.Fatalf("got %d accounts, want 2", len(accs))
+	}
+	// Ordered by currency_id.
+	if accs[0].CurrencyID != 1 || accs[1].CurrencyID != 2 {
+		t.Fatalf("order = [%d,%d], want [1,2]", accs[0].CurrencyID, accs[1].CurrencyID)
+	}
+
+	// An unknown user gets an empty list, not an error.
+	empty, err := r.AccountsByUser(ctx, "u_no_such_user")
+	if err != nil {
+		t.Fatalf("AccountsByUser(unknown): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("unknown user returned %d accounts, want 0", len(empty))
+	}
+}
+
+func TestPlatformWalletSeededPerCurrency(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	// The seed migration (0005) must create a platform balance row for every
+	// currency in the catalog, so the per-currency fee account exists before any
+	// capture — including currencies (e.g. GRAM) that have never been paid into.
+	var missing int
+	err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM currencies c
+		WHERE NOT EXISTS (
+			SELECT 1 FROM wallet_balances b
+			WHERE b.wallet_id = 'wlt_platform' AND b.currency_id = c.id
+		)`).Scan(&missing)
+	if err != nil {
+		t.Fatalf("query missing platform balances: %v", err)
+	}
+	if missing != 0 {
+		t.Fatalf("%d currencies have no platform balance row, want 0", missing)
+	}
+
+	// Both known currencies (1=DEV, 2=GRAM) must be present.
+	for _, ccy := range []int64{1, 2} {
+		var n int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM wallet_balances WHERE wallet_id = 'wlt_platform' AND currency_id = $1`,
+			ccy).Scan(&n); err != nil {
+			t.Fatalf("query platform ccy %d: %v", ccy, err)
+		}
+		if n != 1 {
+			t.Fatalf("platform balance rows for ccy %d = %d, want 1", ccy, n)
+		}
 	}
 }
 

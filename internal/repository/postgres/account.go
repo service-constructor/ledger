@@ -34,6 +34,30 @@ func (r *LedgerRepository) getAccountByUser(ctx context.Context, userID string, 
 	return scanAccount(row)
 }
 
+// AccountsByUser returns every account a user owns, one per currency, oldest
+// first (stable order for display).
+func (r *LedgerRepository) AccountsByUser(ctx context.Context, userID string) ([]*domain.Account, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT wallet_id, user_id, ton_address, memo, currency_id, created_at
+		FROM accounts WHERE user_id = $1 ORDER BY currency_id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query accounts by user: %w", err)
+	}
+	defer rows.Close()
+	var out []*domain.Account
+	for rows.Next() {
+		a, err := scanAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate accounts by user: %w", err)
+	}
+	return out, nil
+}
+
 // AccountByMemo resolves the account a deposit belongs to by its memo tag.
 func (r *LedgerRepository) AccountByMemo(ctx context.Context, memo string) (*domain.Account, error) {
 	row := r.pool.QueryRow(ctx, `

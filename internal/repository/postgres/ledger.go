@@ -161,14 +161,28 @@ func alreadyApplied(ctx context.Context, tx pgx.Tx, orderID string, op domain.Op
 // postLegs inserts the journal rows and folds them into wallet_balances. The
 // NOT NULL + nonneg constraints reject any negative bucket, surfacing as
 // ErrInsufficient.
+//
+// The insert is ON CONFLICT DO NOTHING against the (order_id, op, wallet_id,
+// bucket) idempotency index: a leg already applied (a replay, or a concurrent
+// writer that won the race) inserts nothing. We fold the leg into the balance
+// ONLY when its row was actually inserted, so a duplicate is a clean no-op and
+// never double-credits — even if two writers apply the same ref at once. The
+// caller's alreadyApplied check short-circuits the common replay; this makes the
+// guarantee hold at the storage layer regardless.
 func postLegs(ctx context.Context, tx pgx.Tx, orderID string, op domain.Op, currencyID int64, legs []leg) error {
 	for _, l := range legs {
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			INSERT INTO entries (order_id, op, wallet_id, bucket, currency_id, amount)
-			VALUES ($1,$2,$3,$4,$5,$6)`,
+			VALUES ($1,$2,$3,$4,$5,$6)
+			ON CONFLICT (order_id, op, wallet_id, bucket) DO NOTHING`,
 			orderID, string(op), l.walletID, string(l.bucket), currencyID, l.amount,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("insert entry: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			// Leg already applied (replay or lost race): do not touch the balance.
+			continue
 		}
 		if err := bumpBalance(ctx, tx, l, currencyID); err != nil {
 			return err

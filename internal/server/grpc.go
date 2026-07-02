@@ -41,6 +41,18 @@ func (s *LedgerServer) GetAccountByMemo(ctx context.Context, req *ledgerv1.GetAc
 	return accountToProto(acc), nil
 }
 
+func (s *LedgerServer) ListAccounts(ctx context.Context, req *ledgerv1.ListAccountsRequest) (*ledgerv1.ListAccountsResponse, error) {
+	accs, err := s.svc.ListAccounts(ctx, req.GetUserId())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	out := make([]*ledgerv1.Account, 0, len(accs))
+	for _, a := range accs {
+		out = append(out, accountToProto(a))
+	}
+	return &ledgerv1.ListAccountsResponse{Accounts: out}, nil
+}
+
 func (s *LedgerServer) Freeze(ctx context.Context, req *ledgerv1.FreezeRequest) (*ledgerv1.OpResponse, error) {
 	applied, err := s.svc.Freeze(ctx, req.GetOrderId(), req.GetWalletId(), req.GetCurrencyId(), req.GetAmount())
 	if err != nil {

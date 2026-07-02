@@ -18,6 +18,7 @@ import (
 type Store interface {
 	CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
 	AccountByMemo(ctx context.Context, memo string) (*domain.Account, error)
+	AccountsByUser(ctx context.Context, userID string) ([]*domain.Account, error)
 	Freeze(ctx context.Context, orderID, walletID string, currencyID int64, amount decimal.Decimal) (bool, error)
 	Capture(ctx context.Context, orderID, walletID, receivingWalletID, platformWalletID string, currencyID int64, net, fee decimal.Decimal) (bool, error)
 	Release(ctx context.Context, orderID, walletID string, currencyID int64) (bool, error)
@@ -88,6 +89,14 @@ func (l *Ledger) AccountByMemo(ctx context.Context, memo string) (*domain.Accoun
 		return nil, domain.ErrAccountNotFound
 	}
 	return l.store.AccountByMemo(ctx, memo)
+}
+
+// ListAccounts returns every account a user owns (one per currency).
+func (l *Ledger) ListAccounts(ctx context.Context, userID string) ([]*domain.Account, error) {
+	if userID == "" {
+		return nil, domain.ErrAccountNotFound
+	}
+	return l.store.AccountsByUser(ctx, userID)
 }
 
 // ListCurrencies returns all known currencies (the reference catalog).

@@ -20,6 +20,10 @@ service LedgerService {
   // memo tag. Used by the deposit-crediting path.
   rpc GetAccountByMemo(GetAccountByMemoRequest) returns (Account);
 
+  // ListAccounts returns every account the given user owns (one per currency).
+  // The auth service uses it to render a user's wallets across all currencies.
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+
   // Freeze moves amount from a wallet's available balance into its held balance.
   // Called before the provider executes; guarantees funds exist to capture.
   rpc Freeze(FreezeRequest) returns (OpResponse);
@@ -74,6 +78,15 @@ message CreateAccountRequest {
 
 message GetAccountByMemoRequest {
   string memo = 1;
+}
+
+message ListAccountsRequest {
+  // user_id is the owning user whose accounts to list.
+  string user_id = 1;
+}
+
+message ListAccountsResponse {
+  repeated Account accounts = 1;
 }
 
 // Account is a client's ledger account: the wallet holding their balance plus
